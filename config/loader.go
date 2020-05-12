@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -11,6 +12,9 @@ func LoadFromString(data string) (Config, error) {
 	var yc yamlConfig
 	if err := yaml.Unmarshal([]byte(data), &yc); err != nil {
 		return Config{}, err
+	}
+	if yc.APIVersion != One {
+		return Config{}, errors.New("apiVersion must be 1")
 	}
 	c := configFromYamlConfig(yc)
 	return c, nil
