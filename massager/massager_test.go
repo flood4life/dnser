@@ -46,7 +46,7 @@ var set1 = []dnser.DNSRecord{{
 	Target: "foo.example.org.",
 }}
 var actions1 = dnser.Actions{
-	PutActions: []dnser.PutAction{{
+	PutActions: []dnser.DNSRecord{{
 		Alias:  true,
 		Name:   "bar.example.org.",
 		Target: "foo.example.org.",
@@ -59,8 +59,10 @@ var actions1 = dnser.Actions{
 		Name:   "foobar.example.org.",
 		Target: "example.org.",
 	}},
-	DeleteActions: []dnser.DeleteAction{{
-		Name: "bar.foo.example.org.",
+	DeleteActions: []dnser.DNSRecord{{
+		Alias:  true,
+		Name:   "bar.foo.example.org.",
+		Target: "foo.example.org.",
 	}},
 }
 

@@ -11,15 +11,14 @@ type Massager struct {
 }
 
 func (m Massager) CalculateNeededActions() dnser.Actions {
-	putActions := make([]dnser.PutAction, 0)
-	delActions := make([]dnser.DeleteAction, 0)
+	putActions := make([]dnser.DNSRecord, 0)
+	delActions := make([]dnser.DNSRecord, 0)
+
 	for _, cfg := range m.Desired {
 		tree := transformIntoTree(cfg.Domain, m.Current)
 		flatCurrent := make([]dnser.DNSRecord, 0)
 		for _, node := range tree {
-			for _, r := range flattenTree(cfg.Domain, node) {
-				flatCurrent = append(flatCurrent, r)
-			}
+			flatCurrent = append(flatCurrent, flattenTree(cfg.Domain, node)...)
 		}
 		haveARecord := haveARecord(cfg.IP, cfg.Domain, m.Current)
 		if haveARecord != nil {
@@ -33,13 +32,11 @@ func (m Massager) CalculateNeededActions() dnser.Actions {
 			Target: config.Domain(cfg.IP),
 		}
 		flatDesired = append(flatDesired, wantARecord)
-		for _, a := range findPutActions(flatCurrent, flatDesired) {
-			putActions = append(putActions, a)
-		}
-		for _, a := range findDeleteActions(flatCurrent, flatDesired) {
-			delActions = append(delActions, a)
-		}
+
+		putActions = append(putActions, findPutActions(flatCurrent, flatDesired)...)
+		delActions = append(delActions, findDeleteActions(flatCurrent, flatDesired)...)
 	}
+
 	return dnser.Actions{
 		PutActions:    putActions,
 		DeleteActions: delActions,
@@ -58,24 +55,24 @@ func haveARecord(ip config.IP, domain config.Domain, records []dnser.DNSRecord) 
 	return nil
 }
 
-func findPutActions(have, want []dnser.DNSRecord) []dnser.PutAction {
-	actions := make([]dnser.PutAction, 0)
+func findPutActions(have, want []dnser.DNSRecord) []dnser.DNSRecord {
+	actions := make([]dnser.DNSRecord, 0)
 	for _, wantRecord := range want {
 		haveRecord := findRecordByName(wantRecord.Name, have)
 		if haveRecord == nil || !haveRecord.Equal(wantRecord) {
-			actions = append(actions, dnser.PutAction(wantRecord))
+			actions = append(actions, wantRecord)
 		}
 	}
 
 	return actions
 }
 
-func findDeleteActions(have, want []dnser.DNSRecord) []dnser.DeleteAction {
-	actions := make([]dnser.DeleteAction, 0)
+func findDeleteActions(have, want []dnser.DNSRecord) []dnser.DNSRecord {
+	actions := make([]dnser.DNSRecord, 0)
 	for _, haveRecord := range have {
 		wantRecord := findRecordByName(haveRecord.Name, want)
 		if wantRecord == nil {
-			actions = append(actions, dnser.DeleteAction{Name: haveRecord.Name})
+			actions = append(actions, haveRecord)
 		}
 	}
 
@@ -92,24 +89,22 @@ func findRecordByName(name config.Domain, records []dnser.DNSRecord) *dnser.DNSR
 }
 
 func transformIntoTree(parent config.Domain, records []dnser.DNSRecord) []config.Node {
-	if len(records) == 0 {
-		return nil
-	}
 	children := make([]config.Node, 0)
 	for _, r := range records {
-		if r.Target == parent {
-			children = append(children, config.Node{
-				Value:    r.Name,
-				Children: transformIntoTree(r.Name, records),
-			})
+		if r.Target != parent {
+			continue
 		}
+		children = append(children, config.Node{
+			Value:    r.Name,
+			Children: transformIntoTree(r.Name, records),
+		})
 	}
 
 	return children
 }
 
 func flattenTree(parent config.Domain, node config.Node) []dnser.DNSRecord {
-	if len(node.Children) == 0 {
+	if node.IsLeaf() {
 		return []dnser.DNSRecord{{
 			Alias:  true,
 			Name:   node.Value,
@@ -119,10 +114,7 @@ func flattenTree(parent config.Domain, node config.Node) []dnser.DNSRecord {
 
 	records := make([]dnser.DNSRecord, 0)
 	for _, child := range node.Children {
-		childRecords := flattenTree(node.Value, child)
-		for _, cr := range childRecords {
-			records = append(records, cr)
-		}
+		records = append(records, flattenTree(node.Value, child)...)
 	}
 
 	return records

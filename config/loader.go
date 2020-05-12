@@ -6,6 +6,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// LoadFromString creates a config from a string.
+func LoadFromString(data string) (Config, error) {
+	var yc yamlConfig
+	if err := yaml.Unmarshal([]byte(data), &yc); err != nil {
+		return Config{}, err
+	}
+	c := configFromYamlConfig(yc)
+	return c, nil
+}
+
+type yamlConfig struct {
+	APIVersion APIVersion `yaml:"apiVersion"`
+	Config     []yamlItem `yaml:"config"`
+}
+
+type yamlItem struct {
+	IP      IP        `yaml:"ip"`
+	Domain  string    `yaml:"domain"`
+	Aliases yaml.Node `yaml:"aliases"`
+}
+
 func configFromYamlConfig(yamlCfg yamlConfig) Config {
 	cfg := Config{
 		APIVersion: yamlCfg.APIVersion,
@@ -61,14 +82,4 @@ func domainOfString(value string) Domain {
 		return Domain(value)
 	}
 	return Domain(value + ".")
-}
-
-// LoadFromString creates a config from a string.
-func LoadFromString(data string) (Config, error) {
-	var yc yamlConfig
-	if err := yaml.Unmarshal([]byte(data), &yc); err != nil {
-		return Config{}, err
-	}
-	c := configFromYamlConfig(yc)
-	return c, nil
 }

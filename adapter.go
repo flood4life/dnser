@@ -19,13 +19,8 @@ func (r DNSRecord) Equal(other DNSRecord) bool {
 }
 
 type Actions struct {
-	PutActions    []PutAction
-	DeleteActions []DeleteAction
-}
-
-type PutAction DNSRecord
-type DeleteAction struct {
-	Name config.Domain
+	PutActions    []DNSRecord
+	DeleteActions []DNSRecord
 }
 
 type Lister interface {
