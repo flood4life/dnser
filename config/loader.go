@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"io"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -13,10 +14,24 @@ func LoadFromString(data string) (Config, error) {
 	if err := yaml.Unmarshal([]byte(data), &yc); err != nil {
 		return Config{}, err
 	}
-	if yc.APIVersion != One {
+
+	return processLoadedYaml(yc)
+}
+
+func LoadFromReader(r io.Reader) (Config, error) {
+	var yc yamlConfig
+	if err := yaml.NewDecoder(r).Decode(&yc); err != nil {
+		return Config{}, err
+	}
+
+	return processLoadedYaml(yc)
+}
+
+func processLoadedYaml(cfg yamlConfig) (Config, error) {
+	if cfg.APIVersion != One {
 		return Config{}, errors.New("apiVersion must be 1")
 	}
-	c := configFromYamlConfig(yc)
+	c := configFromYamlConfig(cfg)
 	return c, nil
 }
 
