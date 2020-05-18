@@ -23,3 +23,25 @@ DNSer will create an A record of `domain` to `ip`. Then it will create ALIAS tre
 and then alias each tree node to their parent.
 
 DNSer will also delete all records that resolve to `domain` but not present in any of the `aliases` trees.
+
+## Usage
+
+### Go package
+
+```go
+config := config.LoadFromString(yamlString)
+r53Adapter := adapter.NewRoute53(id, secret)
+records, err := r53Adapter.List(context.Background())
+if err != nil {
+    panic(err)
+}
+m := massager.Massager{
+    Desired: config,
+    Current: records,
+}
+chset := m.CalculateNeededActions()
+err = r53adapter.Process(context.Background(), chset)
+if err != nil {
+    panic(err)
+}
+```
