@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -9,32 +10,127 @@ import (
 	"github.com/aws/aws-sdk-go/service/route53"
 	"github.com/flood4life/dnser"
 	"github.com/flood4life/dnser/config"
+	"golang.org/x/sync/errgroup"
 )
 
+const typeA = "A"
+const defaultTTL = 300 // 5 minutes
+
 type Route53 struct {
-	HostedZone string
-	client     *route53.Route53
+	client *route53.Route53
+	zones  map[config.Domain]string // map TLDs to zone IDs
 }
 
-func NewRoute53(id, secret, hostedZone string) Route53 {
+type hostedZone struct {
+	id   string
+	name config.Domain
+}
+
+func NewRoute53(id, secret string) Route53 {
 	s := session.Must(session.NewSession(
 		aws.NewConfig().WithCredentials(
 			credentials.NewStaticCredentials(id, secret, ""),
 		),
 	))
-	svc := route53.New(s)
+	return NewRoute53FromSession(s)
+}
+
+func NewRoute53FromSession(s *session.Session) Route53 {
 	return Route53{
-		HostedZone: hostedZone,
-		client:     svc,
+		client: route53.New(s),
+		zones:  make(map[config.Domain]string),
 	}
 }
 
 func (a Route53) List(ctx context.Context) ([]dnser.DNSRecord, error) {
+	records, err := a.recordsPerZone(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return flattenRecords(records), nil
+}
+
+func (a Route53) zoneIdForTLD(domain config.Domain) string {
+	// TODO: handle cases when map is not initialized
+	id, ok := a.zones[domain]
+	if !ok {
+		panic("zone ID is unknown")
+	}
+	return id
+}
+
+func (a Route53) initZonesMap(zones []hostedZone) {
+	for _, zone := range zones {
+		a.zones[zone.name] = zone.id
+	}
+}
+
+func flattenRecords(records [][]dnser.DNSRecord) []dnser.DNSRecord {
+	result := make([]dnser.DNSRecord, 0)
+	for _, zoneRecords := range records {
+		result = append(result, zoneRecords...)
+	}
+	return result
+}
+
+func (a Route53) recordsPerZone(ctx context.Context) ([][]dnser.DNSRecord, error) {
+	zones, err := a.listHostedZones(ctx)
+	if err != nil {
+		return nil, err
+	}
+	a.initZonesMap(zones)
+
+	g, ctx := errgroup.WithContext(ctx)
+	records := make([][]dnser.DNSRecord, len(zones))
+
+	for i, zone := range zones {
+		i, zone := i, zone
+		g.Go(func() error {
+			zoneRecords, err := a.listZoneRecords(ctx, zone)
+			if err == nil {
+				records[i] = zoneRecords
+			}
+			return err
+		})
+	}
+
+	err = g.Wait()
+	if err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func (a Route53) listHostedZones(ctx context.Context) ([]hostedZone, error) {
+	zones := make([]hostedZone, 0)
+	err := a.client.ListHostedZonesPagesWithContext(ctx, listZonesInput(),
+		func(output *route53.ListHostedZonesOutput, _ bool) bool {
+			for _, zone := range output.HostedZones {
+				zones = append(zones, hostedZone{
+					id:   extractZoneId(*zone.Id),
+					name: config.Domain(*zone.Name),
+				})
+			}
+
+			return true
+		})
+	return zones, err
+}
+
+func extractZoneId(response string) string {
+	// zone ID from aws response looks like "/hostedzone/Z2H9GA7I9LH893",
+	// but it expects the input in "Z2H9GA7I9LH893" format
+	lastSlashIndex := strings.LastIndex(response, "/")
+	return response[lastSlashIndex+1:]
+}
+
+func (a Route53) listZoneRecords(ctx context.Context, zone hostedZone) ([]dnser.DNSRecord, error) {
 	records := make([]dnser.DNSRecord, 0)
-	err := a.client.ListResourceRecordSetsPagesWithContext(ctx, a.listInput(),
+	err := a.client.ListResourceRecordSetsPagesWithContext(ctx, listZoneRecordsInput(zone.id),
 		func(output *route53.ListResourceRecordSetsOutput, _ bool) bool {
 			for _, recordSet := range output.ResourceRecordSets {
-				if *recordSet.Type != "A" {
+				if *recordSet.Type != typeA {
 					continue
 				}
 				if recordSet.AliasTarget != nil {
@@ -63,52 +159,83 @@ func (a Route53) List(ctx context.Context) ([]dnser.DNSRecord, error) {
 	return records, nil
 }
 
-func (a Route53) listInput() *route53.ListResourceRecordSetsInput {
+func listZonesInput() *route53.ListHostedZonesInput {
+	return &route53.ListHostedZonesInput{}
+}
+
+func listZoneRecordsInput(zoneId string) *route53.ListResourceRecordSetsInput {
 	return &route53.ListResourceRecordSetsInput{
-		HostedZoneId: &a.HostedZone,
+		HostedZoneId: &zoneId,
 	}
 }
 
-func (a Route53) Process(ctx context.Context, actions dnser.Actions) error {
-	_, err := a.client.ChangeResourceRecordSetsWithContext(ctx, a.changeSetInput(actions))
-	return err
-}
-
-func (a Route53) changeSetInput(actions dnser.Actions) *route53.ChangeResourceRecordSetsInput {
-	return &route53.ChangeResourceRecordSetsInput{
-		ChangeBatch:  a.changeBatch(actions),
-		HostedZoneId: &a.HostedZone,
+func (a Route53) Process(ctx context.Context, actions []dnser.Action) error {
+	inputs := a.changeSetInputs(actions)
+	g, ctx := errgroup.WithContext(ctx)
+	for _, input := range inputs {
+		input := input
+		g.Go(func() error {
+			_, err := a.client.ChangeResourceRecordSetsWithContext(ctx, input)
+			return err
+		})
 	}
+	return g.Wait()
 }
 
-func (a Route53) changeBatch(actions dnser.Actions) *route53.ChangeBatch {
+func (a Route53) changeSetInputs(actions []dnser.Action) []*route53.ChangeResourceRecordSetsInput {
+	result := make([]*route53.ChangeResourceRecordSetsInput, 0)
+
+	groupedActions := a.groupActionsPerTLD(actions)
+	for zoneId, zoneActions := range groupedActions {
+		result = append(result, &route53.ChangeResourceRecordSetsInput{
+			ChangeBatch:  a.changeBatch(zoneActions),
+			HostedZoneId: &zoneId,
+		})
+	}
+
+	return result
+}
+
+func (a Route53) groupActionsPerTLD(actions []dnser.Action) map[string][]dnser.Action {
+	result := make(map[string][]dnser.Action)
+	for _, action := range actions {
+		zoneId := a.zoneIdForTLD(action.Record.NameTLD())
+		if _, ok := result[zoneId]; !ok {
+			result[zoneId] = make([]dnser.Action, 0)
+		}
+		result[zoneId] = append(result[zoneId], action)
+	}
+	return result
+}
+
+func (a Route53) changeBatch(actions []dnser.Action) *route53.ChangeBatch {
 	return &route53.ChangeBatch{
-		Changes: append(
-			a.upsertActions(actions.PutActions),
-			a.deleteActions(actions.DeleteActions)...,
-		),
+		Changes: a.changeActions(actions),
 	}
 }
 
-func (a Route53) changeActions(kind string, actions []dnser.DNSRecord) []*route53.Change {
+func (a Route53) changeActions(actions []dnser.Action) []*route53.Change {
 	result := make([]*route53.Change, len(actions))
 
 	for i, action := range actions {
 		result[i] = &route53.Change{
-			Action:            aws.String(kind),
-			ResourceRecordSet: a.resourceRecordSet(action),
+			Action:            aws.String(actionFromActionType(action.Type)),
+			ResourceRecordSet: a.resourceRecordSet(action.Record),
 		}
 	}
 
 	return result
 }
 
-func (a Route53) upsertActions(actions []dnser.DNSRecord) []*route53.Change {
-	return a.changeActions("UPSERT", actions)
-}
-
-func (a Route53) deleteActions(actions []dnser.DNSRecord) []*route53.Change {
-	return a.changeActions("DELETE", actions)
+func actionFromActionType(actionType dnser.ActionType) string {
+	switch actionType {
+	case dnser.Delete:
+		return "DELETE"
+	case dnser.Upsert:
+		return "UPSERT"
+	default:
+		return ""
+	}
 }
 
 func (a Route53) resourceRecordSet(record dnser.DNSRecord) *route53.ResourceRecordSet {
@@ -118,7 +245,8 @@ func (a Route53) resourceRecordSet(record dnser.DNSRecord) *route53.ResourceReco
 	return &route53.ResourceRecordSet{
 		Name:            recordName(record),
 		ResourceRecords: []*route53.ResourceRecord{{Value: recordTarget(record)}},
-		Type:            typeA(),
+		TTL:             aws.Int64(defaultTTL),
+		Type:            aws.String(typeA),
 	}
 }
 
@@ -127,10 +255,10 @@ func (a Route53) aliasRecord(record dnser.DNSRecord) *route53.ResourceRecordSet 
 		AliasTarget: &route53.AliasTarget{
 			DNSName:              recordTarget(record),
 			EvaluateTargetHealth: aws.Bool(false),
-			HostedZoneId:         aws.String(a.HostedZone),
+			HostedZoneId:         aws.String(a.zoneIdForTLD(record.NameTLD())),
 		},
 		Name: recordName(record),
-		Type: typeA(),
+		Type: aws.String(typeA),
 	}
 }
 
@@ -140,8 +268,4 @@ func recordName(r dnser.DNSRecord) *string {
 
 func recordTarget(r dnser.DNSRecord) *string {
 	return aws.String(string(r.Target))
-}
-
-func typeA() *string {
-	return aws.String("A")
 }

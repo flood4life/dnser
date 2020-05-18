@@ -10,7 +10,7 @@ type Massager struct {
 	Current []dnser.DNSRecord
 }
 
-func (m Massager) CalculateNeededActions() dnser.Actions {
+func (m Massager) CalculateNeededActions() []dnser.Action {
 	putActions := make([]dnser.DNSRecord, 0)
 	delActions := make([]dnser.DNSRecord, 0)
 
@@ -37,10 +37,21 @@ func (m Massager) CalculateNeededActions() dnser.Actions {
 		delActions = append(delActions, findDeleteActions(flatCurrent, flatDesired)...)
 	}
 
-	return dnser.Actions{
-		PutActions:    putActions,
-		DeleteActions: delActions,
+	return append(
+		recordsToActions(putActions, dnser.Upsert),
+		recordsToActions(delActions, dnser.Delete)...,
+	)
+}
+
+func recordsToActions(records []dnser.DNSRecord, actionType dnser.ActionType) []dnser.Action {
+	result := make([]dnser.Action, len(records))
+	for i, r := range records {
+		result[i] = dnser.Action{
+			Type:   actionType,
+			Record: r,
+		}
 	}
+	return result
 }
 
 func haveARecord(ip config.IP, domain config.Domain, records []dnser.DNSRecord) *dnser.DNSRecord {
@@ -49,7 +60,7 @@ func haveARecord(ip config.IP, domain config.Domain, records []dnser.DNSRecord) 
 		Name:   domain,
 		Target: config.Domain(ip),
 	}
-	if record := findRecordByName(domain, records); record != nil && record.Equal(shouldRecord) {
+	if record := findRecordByName(domain, records); record != nil && *record == shouldRecord {
 		return record
 	}
 	return nil
@@ -59,7 +70,7 @@ func findPutActions(have, want []dnser.DNSRecord) []dnser.DNSRecord {
 	actions := make([]dnser.DNSRecord, 0)
 	for _, wantRecord := range want {
 		haveRecord := findRecordByName(wantRecord.Name, have)
-		if haveRecord == nil || !haveRecord.Equal(wantRecord) {
+		if haveRecord == nil || !(*haveRecord == wantRecord) {
 			actions = append(actions, wantRecord)
 		}
 	}
