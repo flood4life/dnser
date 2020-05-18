@@ -5,11 +5,14 @@ import (
 	"github.com/flood4life/dnser/config"
 )
 
+// Massager represents the difference between existing and desired set of DNS records.
 type Massager struct {
 	Desired []config.Item
 	Current []dnser.DNSRecord
 }
 
+// CalculateNeededActions returns the list of actions necessary to transform
+// the current state to the desired state.
 func (m Massager) CalculateNeededActions() []dnser.Action {
 	putActions := make([]dnser.DNSRecord, 0)
 	delActions := make([]dnser.DNSRecord, 0)

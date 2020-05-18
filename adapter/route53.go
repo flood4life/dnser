@@ -16,6 +16,7 @@ import (
 const typeA = "A"
 const defaultTTL = 300 // 5 minutes
 
+// Route53 is an Adapter that's using AWS Route53.
 type Route53 struct {
 	client *route53.Route53
 	zones  map[config.Domain]string // map TLDs to zone IDs
@@ -26,6 +27,7 @@ type hostedZone struct {
 	name config.Domain
 }
 
+// NewRoute53 constructs a Route53 instance from AWS access key and secret.
 func NewRoute53(id, secret string) Route53 {
 	s := session.Must(session.NewSession(
 		aws.NewConfig().WithCredentials(
@@ -35,6 +37,7 @@ func NewRoute53(id, secret string) Route53 {
 	return NewRoute53FromSession(s)
 }
 
+// NewRoute53FromSession could be used if a more detailed configuration of AWS Session is needed.
 func NewRoute53FromSession(s *session.Session) Route53 {
 	return Route53{
 		client: route53.New(s),
@@ -42,6 +45,7 @@ func NewRoute53FromSession(s *session.Session) Route53 {
 	}
 }
 
+// List returns all DNS records from all Hosted Zones.
 func (a Route53) List(ctx context.Context) ([]dnser.DNSRecord, error) {
 	records, err := a.recordsPerZone(ctx)
 	if err != nil {
@@ -51,7 +55,7 @@ func (a Route53) List(ctx context.Context) ([]dnser.DNSRecord, error) {
 	return flattenRecords(records), nil
 }
 
-func (a Route53) zoneIdForTLD(domain config.Domain) string {
+func (a Route53) zoneIDForTLD(domain config.Domain) string {
 	// TODO: handle cases when map is not initialized
 	id, ok := a.zones[domain]
 	if !ok {
@@ -108,7 +112,7 @@ func (a Route53) listHostedZones(ctx context.Context) ([]hostedZone, error) {
 		func(output *route53.ListHostedZonesOutput, _ bool) bool {
 			for _, zone := range output.HostedZones {
 				zones = append(zones, hostedZone{
-					id:   extractZoneId(*zone.Id),
+					id:   extractZoneID(*zone.Id),
 					name: config.Domain(*zone.Name),
 				})
 			}
@@ -118,7 +122,7 @@ func (a Route53) listHostedZones(ctx context.Context) ([]hostedZone, error) {
 	return zones, err
 }
 
-func extractZoneId(response string) string {
+func extractZoneID(response string) string {
 	// zone ID from aws response looks like "/hostedzone/Z2H9GA7I9LH893",
 	// but it expects the input in "Z2H9GA7I9LH893" format
 	lastSlashIndex := strings.LastIndex(response, "/")
@@ -163,12 +167,13 @@ func listZonesInput() *route53.ListHostedZonesInput {
 	return &route53.ListHostedZonesInput{}
 }
 
-func listZoneRecordsInput(zoneId string) *route53.ListResourceRecordSetsInput {
+func listZoneRecordsInput(zoneID string) *route53.ListResourceRecordSetsInput {
 	return &route53.ListResourceRecordSetsInput{
-		HostedZoneId: &zoneId,
+		HostedZoneId: &zoneID,
 	}
 }
 
+// Process creates and deletes DNS records.
 func (a Route53) Process(ctx context.Context, actions []dnser.Action) error {
 	inputs := a.changeSetInputs(actions)
 	g, ctx := errgroup.WithContext(ctx)
@@ -186,10 +191,10 @@ func (a Route53) changeSetInputs(actions []dnser.Action) []*route53.ChangeResour
 	result := make([]*route53.ChangeResourceRecordSetsInput, 0)
 
 	groupedActions := a.groupActionsPerTLD(actions)
-	for zoneId, zoneActions := range groupedActions {
+	for zoneID, zoneActions := range groupedActions {
 		result = append(result, &route53.ChangeResourceRecordSetsInput{
 			ChangeBatch:  a.changeBatch(zoneActions),
-			HostedZoneId: &zoneId,
+			HostedZoneId: &zoneID,
 		})
 	}
 
@@ -199,11 +204,11 @@ func (a Route53) changeSetInputs(actions []dnser.Action) []*route53.ChangeResour
 func (a Route53) groupActionsPerTLD(actions []dnser.Action) map[string][]dnser.Action {
 	result := make(map[string][]dnser.Action)
 	for _, action := range actions {
-		zoneId := a.zoneIdForTLD(action.Record.NameTLD())
-		if _, ok := result[zoneId]; !ok {
-			result[zoneId] = make([]dnser.Action, 0)
+		zoneID := a.zoneIDForTLD(action.Record.NameTLD())
+		if _, ok := result[zoneID]; !ok {
+			result[zoneID] = make([]dnser.Action, 0)
 		}
-		result[zoneId] = append(result[zoneId], action)
+		result[zoneID] = append(result[zoneID], action)
 	}
 	return result
 }
@@ -255,7 +260,7 @@ func (a Route53) aliasRecord(record dnser.DNSRecord) *route53.ResourceRecordSet 
 		AliasTarget: &route53.AliasTarget{
 			DNSName:              recordTarget(record),
 			EvaluateTargetHealth: aws.Bool(false),
-			HostedZoneId:         aws.String(a.zoneIdForTLD(record.NameTLD())),
+			HostedZoneId:         aws.String(a.zoneIDForTLD(record.NameTLD())),
 		},
 		Name: recordName(record),
 		Type: aws.String(typeA),

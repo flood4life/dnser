@@ -18,6 +18,7 @@ func LoadFromString(data string) (Config, error) {
 	return processLoadedYaml(yc)
 }
 
+// LoadFromReader creates a config from a io.Reader.
 func LoadFromReader(r io.Reader) (Config, error) {
 	var yc yamlConfig
 	if err := yaml.NewDecoder(r).Decode(&yc); err != nil {

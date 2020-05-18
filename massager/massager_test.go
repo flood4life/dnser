@@ -45,21 +45,27 @@ var set1 = []dnser.DNSRecord{{
 	Name:   "bar.foo.example.org.",
 	Target: "foo.example.org.",
 }}
-var actions1 = dnser.Actions{
-	PutActions: []dnser.DNSRecord{{
+var actions1 = []dnser.Action{{
+	Type: dnser.Upsert,
+	Record: dnser.DNSRecord{
 		Alias:  true,
 		Name:   "bar.example.org.",
 		Target: "foo.example.org.",
-	}, {
+	}}, {
+	Type: dnser.Upsert,
+	Record: dnser.DNSRecord{
 		Alias:  true,
 		Name:   "baz.example.org.",
 		Target: "foo.example.org.",
-	}, {
+	}}, {
+	Type: dnser.Upsert,
+	Record: dnser.DNSRecord{
 		Alias:  true,
 		Name:   "foobar.example.org.",
 		Target: "example.org.",
-	}},
-	DeleteActions: []dnser.DNSRecord{{
+	}}, {
+	Type: dnser.Delete,
+	Record: dnser.DNSRecord{
 		Alias:  true,
 		Name:   "bar.foo.example.org.",
 		Target: "foo.example.org.",
@@ -74,7 +80,7 @@ func TestMassager_CalculateNeededActions(t *testing.T) {
 	tests := []struct {
 		name   string
 		fields fields
-		want   dnser.Actions
+		want   []dnser.Action
 	}{{
 		name: "all good",
 		fields: fields{
