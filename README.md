@@ -1,4 +1,4 @@
-# DNS Maintainer
+# dnser
 
 > DNS done GitOps way
 
@@ -19,10 +19,10 @@ config:
 The configuration consists of a number of items. 
 Each item must contain `ip`, `domain` and `aliases`. `aliases` is a list of trees.
 
-DNSer will create an A record of `domain` to `ip`. Then it will create ALIAS tree roots to `domain`,
+`dnser` will create an A record of `domain` to `ip`. Then it will create ALIAS tree roots to `domain`,
 and then alias each tree node to their parent.
 
-DNSer will also delete all records that resolve to `domain` but not present in any of the `aliases` trees.
+`dnser` will also delete all records that resolve to `domain` but not present in any of the `aliases` trees.
 
 ## Usage
 
