@@ -1,5 +1,7 @@
 # dnser
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/flood4life/dnser)](https://goreportcard.com/report/github.com/flood4life/dnser)
+
 > DNS done GitOps way
 
 ## How it works
