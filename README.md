@@ -42,7 +42,7 @@ m := massager.Massager{
     Current: records,
 }
 chset := m.CalculateNeededActions()
-err = r53adapter.Process(context.Background(), chset)
+err = r53Adapter.Process(context.Background(), chset)
 if err != nil {
     panic(err)
 }
