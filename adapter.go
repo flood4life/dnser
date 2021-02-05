@@ -15,6 +15,7 @@ type DNSRecord struct {
 	Target config.Domain
 }
 
+// NewAliasRecord constructs an alias DNSRecord from input strings.
 func NewAliasRecord(name, target string) DNSRecord {
 	return DNSRecord{
 		Alias:  true,
@@ -23,6 +24,7 @@ func NewAliasRecord(name, target string) DNSRecord {
 	}
 }
 
+// NewRecord constructs a non-alias DNSRecord from input strings.
 func NewRecord(name, target string) DNSRecord {
 	return DNSRecord{
 		Alias:  false,
