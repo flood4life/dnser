@@ -2,23 +2,22 @@ package adapter
 
 import (
 	"context"
-	"strings"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/route53"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsConfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/flood4life/dnser"
 	"github.com/flood4life/dnser/config"
 	"golang.org/x/sync/errgroup"
 )
 
-const typeA = "A"
 const defaultTTL = 300 // 5 minutes
 
 // Route53 is an Adapter that's using AWS Route53.
 type Route53 struct {
-	client *route53.Route53
+	client *route53.Client
 	zones  map[config.Domain]string // map TLDs to zone IDs
 }
 
@@ -29,18 +28,22 @@ type hostedZone struct {
 
 // NewRoute53 constructs a Route53 instance from AWS access key and secret.
 func NewRoute53(id, secret string) Route53 {
-	s := session.Must(session.NewSession(
-		aws.NewConfig().WithCredentials(
-			credentials.NewStaticCredentials(id, secret, ""),
-		),
+	cfg, err := awsConfig.LoadDefaultConfig(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	creds := aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(
+		id, secret, "",
 	))
-	return NewRoute53FromSession(s)
+	cfg.Credentials = creds
+	cfg.Region = "eu-west-1"
+	return NewRoute53FromSession(cfg)
 }
 
 // NewRoute53FromSession could be used if a more detailed configuration of AWS Session is needed.
-func NewRoute53FromSession(s *session.Session) Route53 {
+func NewRoute53FromSession(c aws.Config) Route53 {
 	return Route53{
-		client: route53.New(s),
+		client: route53.NewFromConfig(c),
 		zones:  make(map[config.Domain]string),
 	}
 }
@@ -55,7 +58,7 @@ func (a Route53) List(ctx context.Context) ([]dnser.DNSRecord, error) {
 	return flattenRecords(records), nil
 }
 
-func (a Route53) zoneIDForTLD(domain config.Domain) string {
+func (a Route53) zoneIDFromDomain(domain config.Domain) string {
 	// TODO: handle cases when map is not initialized
 	id, ok := a.zones[domain]
 	if !ok {
@@ -108,57 +111,46 @@ func (a Route53) recordsPerZone(ctx context.Context) ([][]dnser.DNSRecord, error
 
 func (a Route53) listHostedZones(ctx context.Context) ([]hostedZone, error) {
 	zones := make([]hostedZone, 0)
-	err := a.client.ListHostedZonesPagesWithContext(ctx, listZonesInput(),
-		func(output *route53.ListHostedZonesOutput, _ bool) bool {
-			for _, zone := range output.HostedZones {
-				zones = append(zones, hostedZone{
-					id:   extractZoneID(*zone.Id),
-					name: config.Domain(*zone.Name),
-				})
-			}
-
-			return true
-		})
-	return zones, err
-}
-
-func extractZoneID(response string) string {
-	// zone ID from aws response looks like "/hostedzone/Z2H9GA7I9LH893",
-	// but it expects the input in "Z2H9GA7I9LH893" format
-	lastSlashIndex := strings.LastIndex(response, "/")
-	return response[lastSlashIndex+1:]
+	paginator := route53.NewListHostedZonesPaginator(a.client, listZonesInput())
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, zone := range output.HostedZones {
+			zones = append(zones, hostedZone{
+				id:   *zone.Id,
+				name: config.Domain(*zone.Name),
+			})
+		}
+	}
+	return zones, nil
 }
 
 func (a Route53) listZoneRecords(ctx context.Context, zone hostedZone) ([]dnser.DNSRecord, error) {
 	records := make([]dnser.DNSRecord, 0)
-	err := a.client.ListResourceRecordSetsPagesWithContext(ctx, listZoneRecordsInput(zone.id),
-		func(output *route53.ListResourceRecordSetsOutput, _ bool) bool {
-			for _, recordSet := range output.ResourceRecordSets {
-				if *recordSet.Type != typeA {
-					continue
-				}
-				if recordSet.AliasTarget != nil {
-					records = append(records, dnser.DNSRecord{
-						Alias:  true,
-						Name:   config.Domain(*recordSet.Name),
-						Target: config.Domain(*recordSet.AliasTarget.DNSName),
-					})
-				} else {
-					for _, resourceRecord := range recordSet.ResourceRecords {
-						records = append(records, dnser.DNSRecord{
-							Alias:  false,
-							Name:   config.Domain(*recordSet.Name),
-							Target: config.Domain(*resourceRecord.Value),
-						})
-					}
-				}
+	paginator := NewListResourceRecordSetsPaginator(a.client, listZoneRecordsInput(zone.id))
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, recordSet := range output.ResourceRecordSets {
+			if recordSet.Type != types.RRTypeA {
+				continue
 			}
-
-			return true
-		},
-	)
-	if err != nil {
-		return nil, err
+			if recordSet.AliasTarget != nil {
+				records = append(records, dnser.NewAliasRecord(
+					*recordSet.Name, *recordSet.AliasTarget.DNSName,
+				))
+				continue
+			}
+			for _, resourceRecord := range recordSet.ResourceRecords {
+				records = append(records, dnser.NewRecord(
+					*recordSet.Name, *resourceRecord.Value,
+				))
+			}
+		}
 	}
 	return records, nil
 }
@@ -180,7 +172,7 @@ func (a Route53) Process(ctx context.Context, actions []dnser.Action) error {
 	for _, input := range inputs {
 		input := input
 		g.Go(func() error {
-			_, err := a.client.ChangeResourceRecordSetsWithContext(ctx, input)
+			_, err := a.client.ChangeResourceRecordSets(ctx, input)
 			return err
 		})
 	}
@@ -204,7 +196,7 @@ func (a Route53) changeSetInputs(actions []dnser.Action) []*route53.ChangeResour
 func (a Route53) groupActionsPerTLD(actions []dnser.Action) map[string][]dnser.Action {
 	result := make(map[string][]dnser.Action)
 	for _, action := range actions {
-		zoneID := a.zoneIDForTLD(action.Record.NameTLD())
+		zoneID := a.zoneIDFromDomain(action.Record.NameZone())
 		if _, ok := result[zoneID]; !ok {
 			result[zoneID] = make([]dnser.Action, 0)
 		}
@@ -213,18 +205,18 @@ func (a Route53) groupActionsPerTLD(actions []dnser.Action) map[string][]dnser.A
 	return result
 }
 
-func (a Route53) changeBatch(actions []dnser.Action) *route53.ChangeBatch {
-	return &route53.ChangeBatch{
+func (a Route53) changeBatch(actions []dnser.Action) *types.ChangeBatch {
+	return &types.ChangeBatch{
 		Changes: a.changeActions(actions),
 	}
 }
 
-func (a Route53) changeActions(actions []dnser.Action) []*route53.Change {
-	result := make([]*route53.Change, len(actions))
+func (a Route53) changeActions(actions []dnser.Action) []types.Change {
+	result := make([]types.Change, len(actions))
 
 	for i, action := range actions {
-		result[i] = &route53.Change{
-			Action:            aws.String(actionFromActionType(action.Type)),
+		result[i] = types.Change{
+			Action:            actionFromActionType(action.Type),
 			ResourceRecordSet: a.resourceRecordSet(action.Record),
 		}
 	}
@@ -232,38 +224,38 @@ func (a Route53) changeActions(actions []dnser.Action) []*route53.Change {
 	return result
 }
 
-func actionFromActionType(actionType dnser.ActionType) string {
+func actionFromActionType(actionType dnser.ActionType) types.ChangeAction {
 	switch actionType {
 	case dnser.Delete:
-		return "DELETE"
+		return types.ChangeActionDelete
 	case dnser.Upsert:
-		return "UPSERT"
+		return types.ChangeActionUpsert
 	default:
-		return ""
+		panic("don't know how to handle dnser action type: " + actionType)
 	}
 }
 
-func (a Route53) resourceRecordSet(record dnser.DNSRecord) *route53.ResourceRecordSet {
+func (a Route53) resourceRecordSet(record dnser.DNSRecord) *types.ResourceRecordSet {
 	if record.Alias {
 		return a.aliasRecord(record)
 	}
-	return &route53.ResourceRecordSet{
+	return &types.ResourceRecordSet{
 		Name:            recordName(record),
-		ResourceRecords: []*route53.ResourceRecord{{Value: recordTarget(record)}},
+		ResourceRecords: []types.ResourceRecord{{Value: recordTarget(record)}},
 		TTL:             aws.Int64(defaultTTL),
-		Type:            aws.String(typeA),
+		Type:            types.RRTypeA,
 	}
 }
 
-func (a Route53) aliasRecord(record dnser.DNSRecord) *route53.ResourceRecordSet {
-	return &route53.ResourceRecordSet{
-		AliasTarget: &route53.AliasTarget{
+func (a Route53) aliasRecord(record dnser.DNSRecord) *types.ResourceRecordSet {
+	return &types.ResourceRecordSet{
+		AliasTarget: &types.AliasTarget{
 			DNSName:              recordTarget(record),
-			EvaluateTargetHealth: aws.Bool(false),
-			HostedZoneId:         aws.String(a.zoneIDForTLD(record.NameTLD())),
+			EvaluateTargetHealth: false,
+			HostedZoneId:         aws.String(a.zoneIDFromDomain(record.NameZone())),
 		},
 		Name: recordName(record),
-		Type: aws.String(typeA),
+		Type: types.RRTypeA,
 	}
 }
 

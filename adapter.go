@@ -15,17 +15,33 @@ type DNSRecord struct {
 	Target config.Domain
 }
 
-// NameTLD returns the top-level domain of Record's Name.
-func (r DNSRecord) NameTLD() config.Domain {
-	return extractTLD(r.Name)
+func NewAliasRecord(name, target string) DNSRecord {
+	return DNSRecord{
+		Alias:  true,
+		Name:   config.Domain(name),
+		Target: config.Domain(target),
+	}
 }
 
-// TargetTLD returns the top-level domain of Record's Target.
-func (r DNSRecord) TargetTLD() config.Domain {
-	return extractTLD(r.Target)
+func NewRecord(name, target string) DNSRecord {
+	return DNSRecord{
+		Alias:  false,
+		Name:   config.Domain(name),
+		Target: config.Domain(target),
+	}
 }
 
-func extractTLD(domain config.Domain) config.Domain {
+// NameZone returns the domain zone of Record's Name.
+func (r DNSRecord) NameZone() config.Domain {
+	return extractZone(r.Name)
+}
+
+// TargetZone returns the domain zone of Record's Target.
+func (r DNSRecord) TargetZone() config.Domain {
+	return extractZone(r.Target)
+}
+
+func extractZone(domain config.Domain) config.Domain {
 	fields := strings.FieldsFunc(string(domain), func(r rune) bool {
 		return r == '.'
 	})
