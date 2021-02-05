@@ -34,8 +34,8 @@ func TestDNSRecord_NameTLD(t *testing.T) {
 				Name:   tt.fields.Name,
 				Target: tt.fields.Target,
 			}
-			if got := r.NameTLD(); got != tt.want {
-				t.Errorf("NameTLD() = %v, want %v", got, tt.want)
+			if got := r.NameZone(); got != tt.want {
+				t.Errorf("NameZone() = %v, want %v", got, tt.want)
 			}
 		})
 	}
