@@ -213,6 +213,13 @@ func flattenTree(parent config.Domain, node config.Node) []dnser.DNSRecord {
 	}
 
 	records := make([]dnser.DNSRecord, 0)
+	if node.Value != parent {
+		records = append(records, dnser.DNSRecord{
+			Alias:  true,
+			Name:   node.Value,
+			Target: parent,
+		})
+	}
 	for _, child := range node.Children {
 		records = append(records, flattenTree(node.Value, child)...)
 	}
