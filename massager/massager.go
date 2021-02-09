@@ -23,7 +23,7 @@ func (m Massager) CalculateNeededActions() []dnser.Action {
 		for _, node := range tree {
 			flatCurrent = append(flatCurrent, flattenTree(cfg.Domain, node)...)
 		}
-		haveARecord := haveARecord(cfg.IP, cfg.Domain, m.Current)
+		haveARecord := findPresentARecord(cfg.IP, cfg.Domain, m.Current)
 		if haveARecord != nil {
 			flatCurrent = append(flatCurrent, *haveARecord)
 		}
@@ -46,6 +46,92 @@ func (m Massager) CalculateNeededActions() []dnser.Action {
 	)
 }
 
+// SplitDependentActions splits the flat list of dnser.Action into several lists.
+// Actions inside a list may be executed concurrently, but the top-level lists
+// need to be executed in the order they are presented, because records in list i+1
+// reference records in list i.
+func (m Massager) SplitDependentActions(actions []dnser.Action) [][]dnser.Action {
+	// Traverse the tree with DFS and for each node check
+	// if it needs to be upserted and the amount of predecessor
+	// nodes (increment count on each jump)
+	// then group by the amount of predecessor nodes
+
+	// The first list is delete actions,
+	// because they don't depend on anything else.
+	groups := make(map[int][]dnser.Action)
+	groups[0] = filterDeleteActions(actions)
+
+	addAction := func(action dnser.Action, bucket int) {
+		if groups[bucket] == nil {
+			groups[bucket] = make([]dnser.Action, 0)
+		}
+		groups[bucket] = append(groups[bucket], action)
+	}
+	callback := func(domain config.Domain, dependentDomains int) bool {
+		dependencyAction := findDomainUpsertAction(domain, actions)
+		if dependencyAction == nil {
+			return false
+		}
+		addAction(*dependencyAction, dependentDomains)
+		return true
+	}
+
+	for _, root := range m.Desired {
+		traverseTree(root, callback)
+	}
+
+	result := make([][]dnser.Action, len(groups))
+	for i, group := range groups {
+		result[i] = group
+	}
+
+	return result
+}
+
+func findDomainUpsertAction(domain config.Domain, actions []dnser.Action) *dnser.Action {
+	for _, a := range actions {
+		if a.Record.Name == domain {
+			if a.Type == dnser.Upsert {
+				return &a
+			} else {
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func filterDeleteActions(actions []dnser.Action) []dnser.Action {
+	result := make([]dnser.Action, 0, len(actions))
+	for _, a := range actions {
+		if a.Type != dnser.Delete {
+			continue
+		}
+		result = append(result, a)
+	}
+	return result
+}
+
+type treeCallback func(domain config.Domain, dependentDomains int) bool
+
+func traverseTree(root config.Item, callback treeCallback) {
+	dependentDomains := 0
+	if absent := callback(root.Domain, dependentDomains); absent {
+		dependentDomains++
+	}
+
+	traverseNode(root.Aliases, dependentDomains, callback)
+}
+
+func traverseNode(node config.Node, dependentDomains int, callback treeCallback) {
+	if absent := callback(node.Value, dependentDomains); absent {
+		dependentDomains++
+	}
+	for _, n := range node.Children {
+		traverseNode(n, dependentDomains, callback)
+	}
+}
+
 func recordsToActions(records []dnser.DNSRecord, actionType dnser.ActionType) []dnser.Action {
 	result := make([]dnser.Action, len(records))
 	for i, r := range records {
@@ -57,7 +143,7 @@ func recordsToActions(records []dnser.DNSRecord, actionType dnser.ActionType) []
 	return result
 }
 
-func haveARecord(ip config.IP, domain config.Domain, records []dnser.DNSRecord) *dnser.DNSRecord {
+func findPresentARecord(ip config.IP, domain config.Domain, records []dnser.DNSRecord) *dnser.DNSRecord {
 	shouldRecord := dnser.DNSRecord{
 		Alias:  false,
 		Name:   domain,
