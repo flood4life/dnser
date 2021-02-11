@@ -57,13 +57,24 @@ func configFromYamlConfig(yamlCfg yamlConfig) Config {
 			IP:     cfgItem.IP,
 			Domain: domainOfString(cfgItem.Domain),
 		}
-		item.Aliases = nodeFromYaml(cfgItem.Aliases)
-		item.Aliases.Value = item.Domain
+		item.Aliases = nodesFromYaml(cfgItem.Aliases)
 		items[i] = item
 	}
 	cfg.Config = items
 
 	return cfg
+}
+
+func nodesFromYaml(node yaml.Node) []Node {
+	if node.Kind != yaml.SequenceNode {
+		panic("aliases is not a sequence node")
+	}
+
+	result := make([]Node, len(node.Content))
+	for i, n := range node.Content {
+		result[i] = nodeFromYaml(*n)
+	}
+	return result
 }
 
 func nodeFromYaml(node yaml.Node) Node {

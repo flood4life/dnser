@@ -11,22 +11,19 @@ import (
 var config1 = []config.Item{{
 	IP:     "127.0.0.1",
 	Domain: "example.org.",
-	Aliases: config.Node{
-		Value: "example.org.",
+	Aliases: []config.Node{{
+		Value: "foo.example.org.",
 		Children: []config.Node{{
-			Value: "foo.example.org.",
-			Children: []config.Node{{
-				Value:    "bar.example.org.",
-				Children: nil,
-			}, {
-				Value:    "baz.example.org.",
-				Children: nil,
-			}},
+			Value:    "bar.example.org.",
+			Children: nil,
 		}, {
-			Value:    "foobar.example.org.",
+			Value:    "baz.example.org.",
 			Children: nil,
 		}},
-	},
+	}, {
+		Value:    "foobar.example.org.",
+		Children: nil,
+	}},
 }}
 var set1 = []dnser.DNSRecord{{
 	Alias:  false,

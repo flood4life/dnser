@@ -24,7 +24,7 @@ type Config struct {
 type Item struct {
 	IP      IP
 	Domain  Domain
-	Aliases Node
+	Aliases []Node
 }
 
 // Node is a config tree node.

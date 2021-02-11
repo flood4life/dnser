@@ -18,11 +18,9 @@ func (m Massager) CalculateNeededActions() []dnser.Action {
 	delActions := make([]dnser.DNSRecord, 0)
 
 	for _, cfg := range m.Desired {
-		tree := transformIntoTree(cfg.Domain, m.Current)
-		flatCurrent := make([]dnser.DNSRecord, 0)
-		for _, node := range tree {
-			flatCurrent = append(flatCurrent, flattenTree(cfg.Domain, node)...)
-		}
+		treeCurrent := transformIntoTree(cfg.Domain, m.Current)
+		flatCurrent := flattenTree(cfg.Domain, treeCurrent)
+
 		haveARecord := findPresentARecord(cfg.IP, cfg.Domain, m.Current)
 		if haveARecord != nil {
 			flatCurrent = append(flatCurrent, *haveARecord)
@@ -102,7 +100,7 @@ func findDomainUpsertAction(domain config.Domain, actions []dnser.Action) *dnser
 }
 
 func filterDeleteActions(actions []dnser.Action) []dnser.Action {
-	result := make([]dnser.Action, 0, len(actions))
+	result := make([]dnser.Action, 0)
 	for _, a := range actions {
 		if a.Type != dnser.Delete {
 			continue
@@ -120,7 +118,9 @@ func traverseTree(root config.Item, callback treeCallback) {
 		dependentDomains++
 	}
 
-	traverseNode(root.Aliases, dependentDomains, callback)
+	for _, n := range root.Aliases {
+		traverseNode(n, dependentDomains, callback)
+	}
 }
 
 func traverseNode(node config.Node, dependentDomains int, callback treeCallback) {
@@ -203,26 +203,19 @@ func transformIntoTree(parent config.Domain, records []dnser.DNSRecord) []config
 	return children
 }
 
-func flattenTree(parent config.Domain, node config.Node) []dnser.DNSRecord {
-	if node.IsLeaf() {
-		return []dnser.DNSRecord{{
-			Alias:  true,
-			Name:   node.Value,
-			Target: parent,
-		}}
+func flattenTree(parent config.Domain, nodes []config.Node) []dnser.DNSRecord {
+	if len(nodes) == 0 {
+		return nil
 	}
 
-	records := make([]dnser.DNSRecord, 0)
-	if node.Value != parent {
+	records := make([]dnser.DNSRecord, 0, len(nodes))
+	for _, node := range nodes {
 		records = append(records, dnser.DNSRecord{
 			Alias:  true,
 			Name:   node.Value,
 			Target: parent,
 		})
+		records = append(records, flattenTree(node.Value, node.Children)...)
 	}
-	for _, child := range node.Children {
-		records = append(records, flattenTree(node.Value, child)...)
-	}
-
 	return records
 }
