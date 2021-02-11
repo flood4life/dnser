@@ -74,7 +74,7 @@ type Lister interface {
 // Processor implements Process.
 type Processor interface {
 	// Process performs the appropriate changes for each action.
-	Process(ctx context.Context, actions []Action) error
+	Process(ctx context.Context, actions [][]Action) error
 }
 
 // Adapter combines Lister and Processor.

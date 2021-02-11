@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
@@ -119,7 +120,7 @@ func (a Route53) listHostedZones(ctx context.Context) ([]hostedZone, error) {
 		}
 		for _, zone := range output.HostedZones {
 			zones = append(zones, hostedZone{
-				id:   *zone.Id,
+				id:   extractZoneID(*zone.Id),
 				name: config.Domain(*zone.Name),
 			})
 		}
@@ -166,15 +167,17 @@ func listZoneRecordsInput(zoneID string) *route53.ListResourceRecordSetsInput {
 }
 
 // Process creates and deletes DNS records.
-func (a Route53) Process(ctx context.Context, actions []dnser.Action) error {
-	inputs := a.changeSetInputs(actions)
+func (a Route53) Process(ctx context.Context, actionGroups [][]dnser.Action) error {
 	g, ctx := errgroup.WithContext(ctx)
-	for _, input := range inputs {
-		input := input
-		g.Go(func() error {
-			_, err := a.client.ChangeResourceRecordSets(ctx, input)
-			return err
-		})
+	for _, actions := range actionGroups {
+		inputs := a.changeSetInputs(actions)
+		for _, input := range inputs {
+			input := input
+			g.Go(func() error {
+				_, err := a.client.ChangeResourceRecordSets(ctx, input)
+				return err
+			})
+		}
 	}
 	return g.Wait()
 }
@@ -251,7 +254,7 @@ func (a Route53) aliasRecord(record dnser.DNSRecord) *types.ResourceRecordSet {
 	return &types.ResourceRecordSet{
 		AliasTarget: &types.AliasTarget{
 			DNSName:              recordTarget(record),
-			EvaluateTargetHealth: false,
+			EvaluateTargetHealth: true,
 			HostedZoneId:         aws.String(a.zoneIDFromDomain(record.NameZone())),
 		},
 		Name: recordName(record),
@@ -265,4 +268,11 @@ func recordName(r dnser.DNSRecord) *string {
 
 func recordTarget(r dnser.DNSRecord) *string {
 	return aws.String(string(r.Target))
+}
+
+func extractZoneID(response string) string {
+	// zone ID from aws response looks like "/hostedzone/Z2H9GA7I9LH893",
+	// but it expects the input in "Z2H9GA7I9LH893" format
+	lastSlashIndex := strings.LastIndex(response, "/")
+	return response[lastSlashIndex+1:]
 }
