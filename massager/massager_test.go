@@ -113,14 +113,14 @@ func TestMassager_CalculateNeededActions(t *testing.T) {
 	tests := []struct {
 		name   string
 		fields fields
-		want   []dnser.Action
+		want   [][]dnser.Action
 	}{{
 		name: "all good",
 		fields: fields{
 			Desired: config1,
 			Current: set1,
 		},
-		want: actions1,
+		want: groupedActions1,
 	}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
