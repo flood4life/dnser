@@ -173,7 +173,7 @@ func (a Route53) Process(ctx context.Context, actionGroups [][]dnser.Action) err
 		g, gCtx := errgroup.WithContext(ctx)
 		inputs := a.changeSetInputs(actions)
 		for _, input := range inputs {
-			a.processChangeSet(g, gCtx, input)
+			a.processChangeSet(gCtx, g, input)
 		}
 
 		if err := g.Wait(); err != nil {
@@ -184,7 +184,7 @@ func (a Route53) Process(ctx context.Context, actionGroups [][]dnser.Action) err
 	return nil
 }
 
-func (a Route53) processChangeSet(g *errgroup.Group, ctx context.Context, input *route53.ChangeResourceRecordSetsInput) {
+func (a Route53) processChangeSet(ctx context.Context, g *errgroup.Group, input *route53.ChangeResourceRecordSetsInput) {
 	g.Go(func() error {
 		res, err := a.client.ChangeResourceRecordSets(ctx, input)
 		if err != nil {

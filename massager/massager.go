@@ -91,9 +91,9 @@ func findDomainUpsertAction(domain config.Domain, actions []dnser.Action) *dnser
 		if a.Record.Name == domain {
 			if a.Type == dnser.Upsert {
 				return &a
-			} else {
-				return nil
 			}
+
+			return nil
 		}
 	}
 	return nil
