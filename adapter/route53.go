@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
@@ -168,18 +169,40 @@ func listZoneRecordsInput(zoneID string) *route53.ListResourceRecordSetsInput {
 
 // Process creates and deletes DNS records.
 func (a Route53) Process(ctx context.Context, actionGroups [][]dnser.Action) error {
-	g, ctx := errgroup.WithContext(ctx)
 	for _, actions := range actionGroups {
+		g, gCtx := errgroup.WithContext(ctx)
 		inputs := a.changeSetInputs(actions)
 		for _, input := range inputs {
-			input := input
-			g.Go(func() error {
-				_, err := a.client.ChangeResourceRecordSets(ctx, input)
-				return err
-			})
+			a.processChangeSet(g, gCtx, input)
+		}
+
+		if err := g.Wait(); err != nil {
+			return err
 		}
 	}
-	return g.Wait()
+
+	return nil
+}
+
+func (a Route53) processChangeSet(g *errgroup.Group, ctx context.Context, input *route53.ChangeResourceRecordSetsInput) {
+	g.Go(func() error {
+		res, err := a.client.ChangeResourceRecordSets(ctx, input)
+		if err != nil {
+			return err
+		}
+		for {
+			// wait for changes to become active
+			change, err := a.client.GetChange(ctx, &route53.GetChangeInput{Id: res.ChangeInfo.Id})
+			if err != nil {
+				return err
+			}
+			if change.ChangeInfo.Status == types.ChangeStatusInsync {
+				break
+			}
+			time.Sleep(time.Second)
+		}
+		return nil
+	})
 }
 
 func (a Route53) changeSetInputs(actions []dnser.Action) []*route53.ChangeResourceRecordSetsInput {
