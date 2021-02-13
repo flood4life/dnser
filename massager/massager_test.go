@@ -163,8 +163,8 @@ func TestMassager_SplitDependentActions(t *testing.T) {
 				Desired: tt.fields.Desired,
 				Current: tt.fields.Current,
 			}
-			if got := m.SplitDependentActions(tt.args.actions); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("SplitDependentActions() = %v, want %v", got, tt.want)
+			if got := m.splitDependentActions(tt.args.actions); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("splitDependentActions() = %v, want %v", got, tt.want)
 			}
 		})
 	}

@@ -13,7 +13,7 @@ type Massager struct {
 
 // CalculateNeededActions returns the list of actions necessary to transform
 // the current state to the desired state.
-func (m Massager) CalculateNeededActions() []dnser.Action {
+func (m Massager) CalculateNeededActions() [][]dnser.Action {
 	putActions := make([]dnser.DNSRecord, 0)
 	delActions := make([]dnser.DNSRecord, 0)
 
@@ -38,17 +38,19 @@ func (m Massager) CalculateNeededActions() []dnser.Action {
 		delActions = append(delActions, findDeleteActions(flatCurrent, flatDesired)...)
 	}
 
-	return append(
+	actions := append(
 		recordsToActions(putActions, dnser.Upsert),
 		recordsToActions(delActions, dnser.Delete)...,
 	)
+
+	return m.splitDependentActions(actions)
 }
 
-// SplitDependentActions splits the flat list of dnser.Action into several lists.
+// splitDependentActions splits the flat list of dnser.Action into several lists.
 // Actions inside a list may be executed concurrently, but the top-level lists
 // need to be executed in the order they are presented, because records in list i+1
 // reference records in list i.
-func (m Massager) SplitDependentActions(actions []dnser.Action) [][]dnser.Action {
+func (m Massager) splitDependentActions(actions []dnser.Action) [][]dnser.Action {
 	// Traverse the tree with DFS and for each node check
 	// if it needs to be upserted and the amount of predecessor
 	// nodes (increment count on each jump)
