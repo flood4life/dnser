@@ -2,6 +2,8 @@ package adapter
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
@@ -119,7 +121,7 @@ func (a Route53) listHostedZones(ctx context.Context) ([]hostedZone, error) {
 		}
 		for _, zone := range output.HostedZones {
 			zones = append(zones, hostedZone{
-				id:   *zone.Id,
+				id:   extractZoneID(*zone.Id),
 				name: config.Domain(*zone.Name),
 			})
 		}
@@ -166,17 +168,41 @@ func listZoneRecordsInput(zoneID string) *route53.ListResourceRecordSetsInput {
 }
 
 // Process creates and deletes DNS records.
-func (a Route53) Process(ctx context.Context, actions []dnser.Action) error {
-	inputs := a.changeSetInputs(actions)
-	g, ctx := errgroup.WithContext(ctx)
-	for _, input := range inputs {
-		input := input
-		g.Go(func() error {
-			_, err := a.client.ChangeResourceRecordSets(ctx, input)
+func (a Route53) Process(ctx context.Context, actionGroups [][]dnser.Action) error {
+	for _, actions := range actionGroups {
+		g, gCtx := errgroup.WithContext(ctx)
+		inputs := a.changeSetInputs(actions)
+		for _, input := range inputs {
+			a.processChangeSet(gCtx, g, input)
+		}
+
+		if err := g.Wait(); err != nil {
 			return err
-		})
+		}
 	}
-	return g.Wait()
+
+	return nil
+}
+
+func (a Route53) processChangeSet(ctx context.Context, g *errgroup.Group, input *route53.ChangeResourceRecordSetsInput) {
+	g.Go(func() error {
+		res, err := a.client.ChangeResourceRecordSets(ctx, input)
+		if err != nil {
+			return err
+		}
+		for {
+			// wait for changes to become active
+			change, err := a.client.GetChange(ctx, &route53.GetChangeInput{Id: res.ChangeInfo.Id})
+			if err != nil {
+				return err
+			}
+			if change.ChangeInfo.Status == types.ChangeStatusInsync {
+				break
+			}
+			time.Sleep(time.Second)
+		}
+		return nil
+	})
 }
 
 func (a Route53) changeSetInputs(actions []dnser.Action) []*route53.ChangeResourceRecordSetsInput {
@@ -251,7 +277,7 @@ func (a Route53) aliasRecord(record dnser.DNSRecord) *types.ResourceRecordSet {
 	return &types.ResourceRecordSet{
 		AliasTarget: &types.AliasTarget{
 			DNSName:              recordTarget(record),
-			EvaluateTargetHealth: false,
+			EvaluateTargetHealth: true,
 			HostedZoneId:         aws.String(a.zoneIDFromDomain(record.NameZone())),
 		},
 		Name: recordName(record),
@@ -265,4 +291,11 @@ func recordName(r dnser.DNSRecord) *string {
 
 func recordTarget(r dnser.DNSRecord) *string {
 	return aws.String(string(r.Target))
+}
+
+func extractZoneID(response string) string {
+	// zone ID from aws response looks like "/hostedzone/Z2H9GA7I9LH893",
+	// but it expects the input in "Z2H9GA7I9LH893" format
+	lastSlashIndex := strings.LastIndex(response, "/")
+	return response[lastSlashIndex+1:]
 }

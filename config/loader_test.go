@@ -19,23 +19,21 @@ config:
 var config1 = []Item{{
 	IP:     "127.0.0.1",
 	Domain: "example.org.",
-	Aliases: Node{
-		Value: "example.org.",
+	Aliases: []Node{{
+		Value: "foo.example.org.",
 		Children: []Node{{
-			Value: "foo.example.org.",
-			Children: []Node{{
-				Value:    "bar.example.org.",
-				Children: nil,
-			}, {
-				Value:    "baz.example.org.",
-				Children: nil,
-			}},
+			Value:    "bar.example.org.",
+			Children: nil,
 		}, {
-			Value:    "foobar.example.org.",
+			Value:    "baz.example.org.",
 			Children: nil,
 		}},
-	},
-}}
+	}, {
+		Value:    "foobar.example.org.",
+		Children: nil,
+	}},
+},
+}
 
 func TestLoadFromString(t *testing.T) {
 	type args struct {
