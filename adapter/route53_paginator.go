@@ -63,7 +63,7 @@ func NewListResourceRecordSetsPaginator(client ListResourceRecordSetsAPIClient, 
 
 // HasMorePages returns a boolean indicating whether more pages are available
 func (p *ListResourceRecordSetsPaginator) HasMorePages() bool {
-	return p.firstPage || p.nextRecordIdentifier != nil
+	return p.firstPage || p.nextRecordIdentifier != nil || p.nextRecordType != "" || p.nextRecordName != nil
 }
 
 // NextPage retrieves the next ListResourceRecordSets page.
